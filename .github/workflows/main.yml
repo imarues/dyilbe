@@ -1,0 +1,138 @@
+name: Build iKiraPlus V8 Framework Edition
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      THEOS: /Users/runner/theos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install ldid dpkg xz
+
+      - name: Clone Theos
+        run: git clone --recursive https://github.com/theos/theos.git "$THEOS"
+
+      - name: Download SDK
+        run: |
+          git clone https://github.com/theos/sdks.git /tmp/sdks
+          cp -R /tmp/sdks/iPhoneOS16.5.sdk "$THEOS/sdks/"
+
+      - name: Prepare scripts
+        run: chmod +x scripts/*.sh
+
+      - name: Validate framework plists
+        shell: bash
+        run: |
+          set -euo pipefail
+          for p in FrameworkResources/*/Info.plist; do
+            plutil -lint "$p"
+          done
+
+      - name: Build two dylibs and five frameworks
+        run: make clean all
+
+      - name: Collect exact products
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw=".theos/obj/arm64"
+          out="output/Frameworks"
+          rm -rf output
+          mkdir -p "$out"
+
+          for name in iKiraPlus UIDisplayServices; do
+            src="$raw/$name.dylib"
+            test -f "$src" && test -s "$src"
+            ditto "$src" "$out/$name.dylib"
+          done
+
+          for name in UIInfrastructure CoreLifecycle ProcessServices ProcessSupport SystemEnvironment; do
+            src="$raw/$name.framework"
+            test -d "$src"
+            test -s "$src/$name"
+            test -f "$src/Info.plist"
+            ditto "$src" "$out/$name.framework"
+          done
+
+      - name: Validate final products
+        shell: bash
+        run: bash ./scripts/validate_products.sh output/Frameworks
+
+      - name: Print Mach-O diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in output/Frameworks/iKiraPlus.dylib output/Frameworks/UIDisplayServices.dylib; do
+            echo "===== $f ====="
+            file "$f" || true
+            xcrun lipo -info "$f"
+            otool -D "$f" || true
+            otool -L "$f"
+          done
+          for name in UIInfrastructure CoreLifecycle ProcessServices ProcessSupport SystemEnvironment; do
+            f="output/Frameworks/$name.framework/$name"
+            echo "===== $f ====="
+            file "$f" || true
+            xcrun lipo -info "$f"
+            otool -D "$f"
+            otool -L "$f"
+            plutil -p "output/Frameworks/$name.framework/Info.plist"
+          done
+
+      - name: Write checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd output
+          {
+            shasum -a 256 Frameworks/iKiraPlus.dylib
+            shasum -a 256 Frameworks/UIDisplayServices.dylib
+            for name in UIInfrastructure CoreLifecycle ProcessServices ProcessSupport SystemEnvironment; do
+              shasum -a 256 "Frameworks/$name.framework/$name"
+              shasum -a 256 "Frameworks/$name.framework/Info.plist"
+            done
+          } > SHA256SUMS.txt
+
+      - name: Write deployment guide
+        shell: bash
+        run: |
+          cat > output/INJECTION.txt <<'TXT'
+          V8 Framework Edition deployment
+          ===============================
+
+          Copy the CONTENTS of output/Frameworks/ into:
+            Payload/<App>.app/Frameworks/
+
+          The final layout must be:
+            Frameworks/iKiraPlus.dylib
+            Frameworks/UIDisplayServices.dylib
+            Frameworks/UIInfrastructure.framework/UIInfrastructure
+            Frameworks/CoreLifecycle.framework/CoreLifecycle
+            Frameworks/ProcessServices.framework/ProcessServices
+            Frameworks/ProcessSupport.framework/ProcessSupport
+            Frameworks/SystemEnvironment.framework/SystemEnvironment
+
+          Directly inject/load ONLY:
+            @executable_path/Frameworks/iKiraPlus.dylib
+            @executable_path/Frameworks/UIDisplayServices.dylib
+
+          Do NOT directly inject the five frameworks. UIDisplayServices loads them
+          from their framework bundles with dlopen().
+
+          The final signer must sign the two dylibs and all five framework bundles
+          as nested code, then sign the containing .app.
+          TXT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iKiraPlus-V8-Framework-Edition
+          path: output/
+          if-no-files-found: error

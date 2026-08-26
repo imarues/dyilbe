@@ -1,0 +1,11 @@
+V8 Framework Edition
+====================
+- Kept iKiraPlus.dylib and UIDisplayServices.dylib as plain dylibs.
+- Converted the five secondary guards into genuine dynamic framework bundles.
+- Updated dyld image-basename expectations for framework executables.
+- Updated UIDisplayServices to dlopen Frameworks/<Name>.framework/<Name>.
+- Added valid FMWK Info.plist files for every framework.
+- Added @rpath/<Name>.framework/<Name> framework install names.
+- Added mixed-product validation, signing verification, and GitHub artifact layout.
+- Preserved V8 integrity checks, protected strings, logo hash, Telegram checks,
+  UI verification and the piracy warning message.
