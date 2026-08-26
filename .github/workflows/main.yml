@@ -43,23 +43,43 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          raw=".theos/obj/arm64"
           out="output/Frameworks"
           rm -rf output
           mkdir -p "$out"
 
+          # Theos can place products under different architecture-specific
+          # object directories depending on the current Theos revision.
+          # Do not hard-code .theos/obj/arm64; locate the exact built product.
+          find_product() {
+            local pattern="$1"
+            find .theos/obj -type f -path "$pattern" -print -quit 2>/dev/null
+          }
+
           for name in iKiraPlus UIDisplayServices; do
-            src="$raw/$name.dylib"
-            test -f "$src" && test -s "$src"
+            src="$(find_product "*/$name.dylib")"
+            if [[ -z "$src" || ! -s "$src" ]]; then
+              echo "ERROR: could not find built $name.dylib under .theos/obj" >&2
+              echo "Built files:" >&2
+              find .theos/obj -type f -maxdepth 8 -print | sort >&2 || true
+              exit 1
+            fi
+            echo "Collecting $src"
             ditto "$src" "$out/$name.dylib"
           done
 
           for name in UIInfrastructure CoreLifecycle ProcessServices ProcessSupport SystemEnvironment; do
-            src="$raw/$name.framework"
-            test -d "$src"
-            test -s "$src/$name"
-            test -f "$src/Info.plist"
-            ditto "$src" "$out/$name.framework"
+            src="$(find_product "*/$name.framework/$name")"
+            if [[ -z "$src" || ! -s "$src" ]]; then
+              echo "ERROR: could not find built $name.framework/$name under .theos/obj" >&2
+              echo "Built framework files:" >&2
+              find .theos/obj -type f -path "*/$name.framework/*" -print | sort >&2 || true
+              exit 1
+            fi
+
+            fw="${src%/$name}"
+            [[ -f "$fw/Info.plist" ]] || { echo "ERROR: missing $fw/Info.plist" >&2; exit 1; }
+            echo "Collecting $fw"
+            ditto "$fw" "$out/$name.framework"
           done
 
       - name: Validate final products
