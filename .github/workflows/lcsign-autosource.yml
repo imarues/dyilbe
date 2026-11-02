@@ -1,0 +1,48 @@
+name: Build LCSign AutoSource Dylib
+
+on:
+  push:
+    paths:
+      - 'lcsign-autosource/**'
+      - '.github/workflows/lcsign-autosource.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios-arm64:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build arm64 iOS dynamic library with Apple toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          mkdir -p dist
+          xcrun --sdk iphoneos clang \
+            -arch arm64 -isysroot "$SDK" -miphoneos-version-min=15.0 \
+            -fobjc-arc -fblocks -O2 -fvisibility=hidden \
+            -dynamiclib -framework Foundation -framework UIKit \
+            '-Wl,-install_name,@rpath/LCSignAutoSource.dylib' \
+            lcsign-autosource/LCSignAutoSource.m \
+            -o dist/LCSignAutoSource.dylib
+          file dist/LCSignAutoSource.dylib
+          xcrun otool -hv dist/LCSignAutoSource.dylib
+          xcrun otool -L dist/LCSignAutoSource.dylib
+          # Ad-hoc signing proves that the produced Mach-O can be code-signed;
+          # the final app signer MUST re-sign this dylib and the enclosing app
+          # with the actual matching identity when embedding into an IPA.
+          codesign --force --sign - --timestamp=none dist/LCSignAutoSource.dylib
+          codesign --verify --verbose=2 dist/LCSignAutoSource.dylib
+      - name: Upload dylib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LCSignAutoSource-ios-arm64
+          path: dist/LCSignAutoSource.dylib
+          if-no-files-found: error
+          retention-days: 14
