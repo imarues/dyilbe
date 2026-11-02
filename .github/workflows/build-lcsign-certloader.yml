@@ -1,0 +1,47 @@
+name: Build LCSign CertLoader Dylib
+
+on:
+  push:
+    paths:
+      - 'lcsign-certloader/**'
+      - '.github/workflows/build-lcsign-certloader.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Compile iOS arm64 dylib
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          mkdir -p dist
+          xcrun --sdk iphoneos clang \
+            -arch arm64 -isysroot "$SDK" -miphoneos-version-min=15.0 \
+            -fobjc-arc -fblocks -Os -fvisibility=hidden \
+            -dynamiclib -framework Foundation -framework UIKit \
+            '-Wl,-install_name,@rpath/LCSignCertLoader.dylib' \
+            lcsign-certloader/LCSignCertLoader.m \
+            -o dist/LCSignCertLoader.dylib
+
+          file dist/LCSignCertLoader.dylib
+          xcrun otool -hv dist/LCSignCertLoader.dylib
+          xcrun otool -L dist/LCSignCertLoader.dylib
+          codesign --force --sign - --timestamp=none dist/LCSignCertLoader.dylib
+          codesign --verify --verbose=2 dist/LCSignCertLoader.dylib
+
+      - name: Upload test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LCSignCertLoader-ios-arm64
+          path: dist/LCSignCertLoader.dylib
+          if-no-files-found: error
+          retention-days: 14
