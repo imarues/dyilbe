@@ -87,6 +87,74 @@ static BOOL isCert(NSString *n,NSString *ext){
 +(instancetype)lc_fromFile:(NSString *)p{return [self lc_fromFile:rPath(p)];}
 -(instancetype)lc_initFile:(NSString *)p{return [self lc_initFile:rPath(p)];}
 @end
+
+// Correct only a CACHED UDID preference using one registered device from the
+// CURRENT embedded provisioning profile. Does not change the hardware UDID.
+static NSString *singleProfileUDID=nil;
+static BOOL isUDIDString(id obj){
+ if(![obj isKindOfClass:[NSString class]])return NO;
+ NSString *s=[(NSString *)obj uppercaseString];
+ NSRegularExpression *re=[NSRegularExpression regularExpressionWithPattern:
+   @"^(?:[0-9A-F]{8}-[0-9A-F]{16}|[0-9A-F]{40})$" options:0 error:NULL];
+ return [re numberOfMatchesInString:s options:0 range:NSMakeRange(0,s.length)]==1;
+}
+static BOOL isUDIDKey(NSString *key){
+ if(![key isKindOfClass:[NSString class]])return NO;
+ NSString *s=key.lowercaseString;
+ return [s containsString:@"udid"]||[s containsString:@"deviceid"]||
+        [s containsString:@"device_id"]||[s containsString:@"deviceidentifier"];
+}
+static NSString *getUniqueUDIDFromAssets(void){
+ NSString *path=[[[NSBundle mainBundle] bundlePath]
+   stringByAppendingPathComponent:@"signing-assets/iKiraPlus/cert.mobileprovision"];
+ NSData *data=[NSData dataWithContentsOfFile:path];
+ if(!data || data.length>(8u<<20))return nil;
+ NSData *a=[@"<?xml" dataUsingEncoding:NSUTF8StringEncoding];
+ NSData *b=[@"</plist>" dataUsingEncoding:NSUTF8StringEncoding];
+ NSRange start=[data rangeOfData:a options:0 range:NSMakeRange(0,data.length)];
+ if(start.location==NSNotFound)return nil;
+ NSRange end=[data rangeOfData:b options:0 range:NSMakeRange(start.location,data.length-start.location)];
+ if(end.location==NSNotFound)return nil;
+ NSData *xml=[data subdataWithRange:NSMakeRange(start.location,NSMaxRange(end)-start.location)];
+ NSDictionary *plist=[NSPropertyListSerialization propertyListWithData:xml
+   options:NSPropertyListImmutable format:NULL error:NULL];
+ if(![plist isKindOfClass:[NSDictionary class]])return nil;
+ NSArray *devices=plist[@"ProvisionedDevices"];
+ if(![devices isKindOfClass:[NSArray class]]||devices.count!=1)return nil;
+ NSString *udid=devices.firstObject;
+ if(!isUDIDString(udid))return nil;
+ return udid.uppercaseString;
+}
+static void updateCachedUDIDPrefs(void){
+ if(!singleProfileUDID)return;
+ NSUserDefaults *defaults=[NSUserDefaults standardUserDefaults];
+ NSDictionary *saved=[defaults dictionaryRepresentation];
+ for(id key in saved){
+   if(isUDIDKey(key) && isUDIDString(saved[key]) &&
+     ![saved[key] isEqualToString:singleProfileUDID]){
+      [defaults setObject:singleProfileUDID forKey:key];
+   }
+ }
+}
+@interface NSUserDefaults (LCSignSingleProvisionUDID)
+- (id)lc_udidObjectForKey:(NSString *)key;
+- (NSString *)lc_udidStringForKey:(NSString *)key;
+@end
+@implementation NSUserDefaults (LCSignSingleProvisionUDID)
+- (id)lc_udidObjectForKey:(NSString *)key {
+ id value=[self lc_udidObjectForKey:key];
+ if(singleProfileUDID && isUDIDKey(key) && isUDIDString(value))
+   return singleProfileUDID;
+ return value;
+}
+- (NSString *)lc_udidStringForKey:(NSString *)key {
+ NSString *value=[self lc_udidStringForKey:key];
+ if(singleProfileUDID && isUDIDKey(key) && isUDIDString(value))
+   return singleProfileUDID;
+ return value;
+}
+@end
+
 static void swap(Class cls,SEL original,SEL replacement,BOOL classMethod){
  Class target=classMethod?object_getClass(cls):cls;
  Method a=class_getInstanceMethod(target,original),b=class_getInstanceMethod(target,replacement);
@@ -100,5 +168,11 @@ __attribute__((constructor))static void setup(void){
   swap([NSBundle class],@selector(pathForResource:ofType:),@selector(lc_path:type:),NO);
   swap([NSData class],@selector(dataWithContentsOfFile:),@selector(lc_fromFile:),YES);
   swap([NSData class],@selector(initWithContentsOfFile:),@selector(lc_initFile:),NO);
+  singleProfileUDID=getUniqueUDIDFromAssets();
+  if(singleProfileUDID){
+   updateCachedUDIDPrefs();
+   swap([NSUserDefaults class],@selector(objectForKey:),@selector(lc_udidObjectForKey:),NO);
+   swap([NSUserDefaults class],@selector(stringForKey:),@selector(lc_udidStringForKey:),NO);
+  }
  }
 }
