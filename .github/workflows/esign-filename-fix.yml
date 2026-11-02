@@ -1,0 +1,40 @@
+name: Build ESign Filename Fix
+on:
+  push:
+    paths:
+      - 'ESignFilenameFix/**'
+      - '.github/workflows/esign-filename-fix.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dylib:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build for iOS arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang \
+            -arch arm64 -isysroot "$SDK" -miphoneos-version-min=13.0 \
+            -fobjc-arc -O2 -fvisibility=hidden -dynamiclib \
+            -install_name '@rpath/ESignFilenameFix.dylib' \
+            -framework Foundation \
+            ESignFilenameFix/src/ESignFilenameFix.m \
+            ESignFilenameFix/src/IPAArchiveCheck.c \
+            -o ESignFilenameFix.dylib
+          codesign --force --sign - ESignFilenameFix.dylib
+          file ESignFilenameFix.dylib
+          otool -hv ESignFilenameFix.dylib
+          shasum -a 256 ESignFilenameFix.dylib > ESignFilenameFix.sha256
+      - name: Upload compiled dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: ESignFilenameFix-iOS-arm64
+          path: |
+            ESignFilenameFix.dylib
+            ESignFilenameFix.sha256
+          if-no-files-found: error
