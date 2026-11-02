@@ -3,6 +3,14 @@
 #import <dispatch/dispatch.h>
 #import "IPAArchiveCheck.h"
 
+// ESign's private download model interface (selectors verified in the IPA).
+@interface NSObject (ESignDownloadRuntime)
+- (NSString *)fileSavePath;
+- (void)setFileSavePath:(NSString *)path;
+- (NSString *)name;
+- (void)setName:(NSString *)name;
+@end
+
 // Only completed downloads with IPA archive content are changed.
 // No network callbacks or download-button hooks.
 static void (*originalSave)(id, SEL) = NULL;
